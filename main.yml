@@ -1,0 +1,176 @@
+---
+- name: Configure Wordpress
+  hosts: web
+  become: true
+  vars_files:
+    - vars/ext_vars.yml
+    - vars/vault.yml
+
+  tasks:
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+    
+    - name: Install PHP 7.4 
+      apt:
+        name: '{{ item }}'
+        state: present
+        update_cache: true
+      loop:
+        - php
+        - php-mysql
+        - php-cli
+        - php-curl
+        - php-fpm
+        - php-json
+        - php-intl
+        - php-xml
+        - php-zip
+        - php-gd
+        - php-mbstring
+        - php-soap
+
+    - name: Copy Nginx Template 
+      template:
+        src: Templates/nginx.conf.j2
+        dest: /etc/nginx/sites-enabled/{{ domain_name }}.com
+
+    - name: Create Nginx Config Symlink
+      file:
+        src: /etc/nginx/sites-enabled/{{ domain_name }}.com
+        dest: /etc/nginx/sites-available/{{ domain_name }}.com
+        state: link
+
+    - name: Start and enable Nginx
+      service:
+        name: nginx
+        enabled: yes
+        state: started
+
+    - name: Enable PHP-FPM 
+      shell: systemctl enable --now php7.4-fpm 
+
+    - name: Allow SSH through firewall
+      ufw:
+        rule: allow
+        port: ssh
+        proto: tcp
+
+    - name: Allow http through the firewall
+      ufw:
+        rule: allow
+        port: 80
+        proto: tcp
+        state: enabled
+
+    - name: Create Wordpress Directory 
+      file:
+        path: /var/www/{{ domain_name }}
+        state: directory
+        mode: 0755
+
+    - name: Download Wordpress 
+      unarchive:
+        src: https://wordpress.org/latest.tar.gz
+        dest: "/var/www/{{ domain_name }}"
+        remote_src: yes
+        owner: www-data
+        group: www-data
+        mode: 0755
+
+    - name: Copy Wp-Config 
+      template:
+        src: Templates/wp-config.php.j2
+        dest: /var/www/{{ domain_name }}/wordpress/wp-config.php
+        owner: www-data
+        group: www-data
+        mode: 0755
+
+    - name: Restart Nginx 
+      service: 
+        name: nginx
+        state: restarted
+
+- name: Configure DB Server
+  hosts: db
+  become: true
+  vars_files:
+    - vars/ext_vars.yml
+    - vars/vault.yml
+  tasks:
+    - name: install mysql
+      apt:
+        name: mysql-server
+        state: present
+        update_cache: yes
+
+    - name: Install pip3
+      apt:
+        name: python3-pip
+        state: present
+        update_cache: yes
+
+    - name: install python3-PyMySQL
+      pip:
+        name: pymysql
+        state: present
+
+    - name: Start and Enable mysql 
+      service:
+        name: mysql
+        enabled: yes
+        state: started
+    
+    - name: Change Auth Plugin of MySQL root ec2-user
+      shell: mysql -u root -e 'UPDATE mysql.user SET plugin="mysql_native_password" WHERE user="root" AND host="localhost"'
+
+    - name: Flush Privileges
+      shell: mysql -u root -e 'FLUSH PRIVILEGES'
+
+    - name: Set MySQL Pass
+      mysql_user:
+        login_host: 'localhost'
+        login_user: 'root'
+        login_password: ''
+        name: 'root'
+        password: '{{ mysql_pass }}'
+        state: present 
+
+    - name: my.cnf template 
+      template:
+        src: Templates/root.cnf.j2
+        dest: /root/.my.cnf
+        mode: 0600
+
+    - name: Set BIND address on MySQL Server
+      lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^bind-address'
+        line: bind-address = {{ mysql_db_server }}
+
+    - name: Create Wordpress Database
+      mysql_db:
+        name: "{{ mysql_wp_db }}"
+        state: present
+
+    - name: Create Wordpress Local User
+      mysql_user:
+        state: present
+        name: "{{ mysql_wp_local_user }}"
+        password: "{{ mysql_wp_local_pass }}"
+        priv: "{{ mysql_wp_db }}.*:ALL"
+
+    - name: Create Wordpress Remote User
+      mysql_user:
+        state: present
+        name: "{{ mysql_wp_user }}"
+        password: "{{ mysql_wp_pass }}"
+        priv: "{{ mysql_wp_db }}.*:ALL"
+        host: "{{ web_server_ip }}"
+        
+    - name: Restart MySQL 
+      service:
+        name: mysql
+        state: restarted
+     

@@ -1,0 +1,9 @@
+---
+domain_name: yourdomain
+mysql_wp_db: Wordpress
+mysql_wp_user: wordpressremoteuser
+mysql_db_server: 10.0.1.100
+web_server_ip: 10.0.1.10
+mysql_wp_local_user: wordpressuser
+
+
